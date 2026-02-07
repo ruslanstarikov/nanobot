@@ -1,5 +1,7 @@
 """LiteLLM provider implementation for multi-provider support."""
 
+import json
+import logging
 import os
 from typing import Any
 
@@ -7,6 +9,8 @@ import litellm
 from litellm import acompletion
 
 from nanobot.providers.base import LLMProvider, LLMResponse, ToolCallRequest
+
+logger = logging.getLogger(__name__)
 
 
 class LiteLLMProvider(LLMProvider):
@@ -146,9 +150,44 @@ class LiteLLMProvider(LLMProvider):
         
         try:
             response = await acompletion(**kwargs)
+
+            # INSTRUMENTATION: Log raw LLM response
+            logger.info("=" * 80)
+            logger.info("[INSTRUMENTATION] Raw LLM Response received")
+            logger.info(f"Model: {model}")
+            logger.info(f"Response type: {type(response)}")
+            logger.info(f"Response object attributes: {dir(response)}")
+
+            if hasattr(response, 'choices') and response.choices:
+                choice = response.choices[0]
+                logger.info(f"First choice type: {type(choice)}")
+                logger.info(f"First choice attributes: {dir(choice)}")
+
+                if hasattr(choice, 'message'):
+                    message = choice.message
+                    logger.info(f"Message type: {type(message)}")
+                    logger.info(f"Message attributes: {dir(message)}")
+                    logger.info(f"Message content: {message.content}")
+
+                    # Check for tool_calls attribute
+                    if hasattr(message, 'tool_calls'):
+                        logger.info(f"tool_calls attribute exists: {message.tool_calls}")
+                        logger.info(f"tool_calls type: {type(message.tool_calls)}")
+                        if message.tool_calls:
+                            logger.info(f"Number of tool calls: {len(message.tool_calls)}")
+                            for idx, tc in enumerate(message.tool_calls):
+                                logger.info(f"  Tool call {idx}: {tc}")
+                                logger.info(f"  Tool call {idx} type: {type(tc)}")
+                                logger.info(f"  Tool call {idx} attributes: {dir(tc)}")
+                    else:
+                        logger.info("tool_calls attribute DOES NOT EXIST on message")
+
+            logger.info("=" * 80)
+
             return self._parse_response(response)
         except Exception as e:
             # Return error as content for graceful handling
+            logger.error(f"[INSTRUMENTATION] Error calling LLM: {str(e)}", exc_info=True)
             return LLMResponse(
                 content=f"Error calling LLM: {str(e)}",
                 finish_reason="error",
@@ -156,27 +195,41 @@ class LiteLLMProvider(LLMProvider):
     
     def _parse_response(self, response: Any) -> LLMResponse:
         """Parse LiteLLM response into our standard format."""
+        logger.info("[INSTRUMENTATION] Parsing LLM response")
+
         choice = response.choices[0]
         message = choice.message
-        
+
         tool_calls = []
         if hasattr(message, "tool_calls") and message.tool_calls:
-            for tc in message.tool_calls:
+            logger.info(f"[INSTRUMENTATION] Found {len(message.tool_calls)} tool call(s) to parse")
+            for idx, tc in enumerate(message.tool_calls):
+                logger.info(f"[INSTRUMENTATION] Parsing tool call {idx}:")
+                logger.info(f"  - ID: {tc.id}")
+                logger.info(f"  - Function name: {tc.function.name}")
+                logger.info(f"  - Function arguments type: {type(tc.function.arguments)}")
+                logger.info(f"  - Function arguments raw: {tc.function.arguments}")
+
                 # Parse arguments from JSON string if needed
                 args = tc.function.arguments
                 if isinstance(args, str):
-                    import json
                     try:
                         args = json.loads(args)
+                        logger.info(f"  - Parsed arguments: {args}")
                     except json.JSONDecodeError:
+                        logger.warning(f"  - Failed to parse arguments as JSON, using raw")
                         args = {"raw": args}
-                
-                tool_calls.append(ToolCallRequest(
+
+                tool_call_req = ToolCallRequest(
                     id=tc.id,
                     name=tc.function.name,
                     arguments=args,
-                ))
-        
+                )
+                tool_calls.append(tool_call_req)
+                logger.info(f"  - Created ToolCallRequest: {tool_call_req}")
+        else:
+            logger.info("[INSTRUMENTATION] No tool calls found in message")
+
         usage = {}
         if hasattr(response, "usage") and response.usage:
             usage = {
@@ -184,13 +237,19 @@ class LiteLLMProvider(LLMProvider):
                 "completion_tokens": response.usage.completion_tokens,
                 "total_tokens": response.usage.total_tokens,
             }
-        
-        return LLMResponse(
+
+        llm_response = LLMResponse(
             content=message.content,
             tool_calls=tool_calls,
             finish_reason=choice.finish_reason or "stop",
             usage=usage,
         )
+
+        logger.info(f"[INSTRUMENTATION] Created LLMResponse with {len(llm_response.tool_calls)} tool call(s)")
+        logger.info(f"[INSTRUMENTATION] LLMResponse.has_tool_calls: {llm_response.has_tool_calls}")
+        logger.info("=" * 80)
+
+        return llm_response
     
     def get_default_model(self) -> str:
         """Get the default model."""

@@ -1,8 +1,11 @@
 """Tool registry for dynamic tool management."""
 
+import logging
 from typing import Any
 
 from nanobot.agent.tools.base import Tool
+
+logger = logging.getLogger(__name__)
 
 
 class ToolRegistry:
@@ -38,27 +41,53 @@ class ToolRegistry:
     async def execute(self, name: str, params: dict[str, Any]) -> str:
         """
         Execute a tool by name with given parameters.
-        
+
         Args:
             name: Tool name.
             params: Tool parameters.
-        
+
         Returns:
             Tool execution result as string.
-        
+
         Raises:
             KeyError: If tool not found.
         """
+        logger.info("=" * 80)
+        logger.info(f"[INSTRUMENTATION] ToolRegistry.execute() called")
+        logger.info(f"[INSTRUMENTATION] Tool name: {name}")
+        logger.info(f"[INSTRUMENTATION] Parameters: {params}")
+        logger.info(f"[INSTRUMENTATION] Registered tools: {list(self._tools.keys())}")
+
         tool = self._tools.get(name)
         if not tool:
+            logger.error(f"[INSTRUMENTATION] TOOL NOT FOUND: '{name}'")
+            logger.error(f"[INSTRUMENTATION] Available tools: {list(self._tools.keys())}")
             return f"Error: Tool '{name}' not found"
 
+        logger.info(f"[INSTRUMENTATION] Tool found: {tool}")
+        logger.info(f"[INSTRUMENTATION] Tool class: {tool.__class__.__name__}")
+
         try:
+            logger.info(f"[INSTRUMENTATION] Validating parameters...")
             errors = tool.validate_params(params)
             if errors:
+                logger.error(f"[INSTRUMENTATION] Parameter validation FAILED: {errors}")
                 return f"Error: Invalid parameters for tool '{name}': " + "; ".join(errors)
-            return await tool.execute(**params)
+
+            logger.info(f"[INSTRUMENTATION] Parameters validated successfully")
+            logger.info(f"[INSTRUMENTATION] Executing tool.execute(**params)...")
+
+            result = await tool.execute(**params)
+
+            logger.info(f"[INSTRUMENTATION] Tool execution COMPLETED")
+            logger.info(f"[INSTRUMENTATION] Result type: {type(result)}")
+            logger.info(f"[INSTRUMENTATION] Result (first 300 chars): {str(result)[:300]}")
+            logger.info("=" * 80)
+
+            return result
         except Exception as e:
+            logger.error(f"[INSTRUMENTATION] Tool execution FAILED with exception: {e}", exc_info=True)
+            logger.error("=" * 80)
             return f"Error executing {name}: {str(e)}"
     
     @property

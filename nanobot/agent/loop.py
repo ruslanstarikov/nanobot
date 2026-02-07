@@ -186,19 +186,29 @@ class AgentLoop:
         # Agent loop
         iteration = 0
         final_content = None
-        
+
         while iteration < self.max_iterations:
             iteration += 1
-            
+
+            logger.info(f"[INSTRUMENTATION] Agent loop iteration {iteration}/{self.max_iterations}")
+            logger.info(f"[INSTRUMENTATION] Calling LLM with {len(self.tools.get_definitions())} tool definitions")
+
             # Call LLM
             response = await self.provider.chat(
                 messages=messages,
                 tools=self.tools.get_definitions(),
                 model=self.model
             )
-            
+
+            logger.info(f"[INSTRUMENTATION] LLM response received")
+            logger.info(f"[INSTRUMENTATION] response.has_tool_calls: {response.has_tool_calls}")
+            logger.info(f"[INSTRUMENTATION] len(response.tool_calls): {len(response.tool_calls)}")
+            logger.info(f"[INSTRUMENTATION] response.content: {response.content[:200] if response.content else None}")
+
             # Handle tool calls
             if response.has_tool_calls:
+                logger.info(f"[INSTRUMENTATION] TOOL CALLS DETECTED! Processing {len(response.tool_calls)} tool call(s)")
+
                 # Add assistant message with tool calls
                 tool_call_dicts = [
                     {
@@ -211,19 +221,36 @@ class AgentLoop:
                     }
                     for tc in response.tool_calls
                 ]
+
+                logger.info(f"[INSTRUMENTATION] Created {len(tool_call_dicts)} tool_call_dicts")
+                for idx, tcd in enumerate(tool_call_dicts):
+                    logger.info(f"[INSTRUMENTATION] tool_call_dict[{idx}]: {tcd}")
+
                 messages = self.context.add_assistant_message(
                     messages, response.content, tool_call_dicts
                 )
-                
+                logger.info(f"[INSTRUMENTATION] Added assistant message with tool calls to message history")
+
                 # Execute tools
-                for tool_call in response.tool_calls:
+                for idx, tool_call in enumerate(response.tool_calls):
                     args_str = json.dumps(tool_call.arguments, ensure_ascii=False)
+                    logger.info(f"[INSTRUMENTATION] Executing tool {idx+1}/{len(response.tool_calls)}")
+                    logger.info(f"[INSTRUMENTATION] Tool ID: {tool_call.id}")
+                    logger.info(f"[INSTRUMENTATION] Tool name: {tool_call.name}")
+                    logger.info(f"[INSTRUMENTATION] Tool arguments: {args_str[:500]}")
                     logger.info(f"Tool call: {tool_call.name}({args_str[:200]})")
+
                     result = await self.tools.execute(tool_call.name, tool_call.arguments)
+
+                    logger.info(f"[INSTRUMENTATION] Tool execution completed")
+                    logger.info(f"[INSTRUMENTATION] Tool result (first 300 chars): {result[:300]}")
+
                     messages = self.context.add_tool_result(
                         messages, tool_call.id, tool_call.name, result
                     )
+                    logger.info(f"[INSTRUMENTATION] Added tool result to message history")
             else:
+                logger.info("[INSTRUMENTATION] NO TOOL CALLS - Agent loop finished")
                 # No tool calls, we're done
                 final_content = response.content
                 break
